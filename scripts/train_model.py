@@ -70,19 +70,32 @@ idx = np.where(min_accors_time['sfc_temp'].values > -52)[0]
 
 subset1 = subset.isel(time1 = idx)
 
-df_stacked = xr.concat([subset1.isel(rlat = coords_in_arr.T[0,i], rlon=coords_in_arr.T[1,i]).expand_dims("z") for i in range(len(coords_in_arr))],
+df_stacked = xr.concat([subset1.isel(rlat = coords_in_arr.T[0,i], rlon=coords_in_arr.T[1,i]).expand_dims("z") for i in
+                        range(len(coords_in_arr))],
                        dim ="z")
+# checking whether this matched up
+#fig, ax = plt.subplots()
+#train_set['sfc_temp'].isel(x =46, y = 81).plot(ax =ax, color='b')
+#subset1['sfc_temp'].isel(rlat = 46, rlon = 81, time1 = slice(59,100)).plot(ax = ax, color='r')
+#fig.show()
+#fig, ax = plt.subplots()
+
 
 
 def merge_data(x, pts =[416,256]):
     print("merging")
-    xi, yi = np.meshgrid(np.arange(pts[1]), np.arange(pts[0]))
+    xi, yi = np.meshgrid(np.arange(pts[0]), np.arange(pts[1]))
+    xi = xi.T
+    yi = yi.T
     interp = NearestNDInterpolator(list(coords_in_arr), x.astype('int8'))
-    return interp(xi, yi).astype('int8')
+    return interp(xi, yi)#.astype('int8')
 # Using nearest neigbour interpolation to initialize the outputs
-
-
-train_set = xr.apply_ufunc(merge_data, df_stacked,
+"""
+There is likely an issue in this part of the code
+"""
+""""On this line in created df_stacked is the issue
+"""
+train_set = xr.apply_ufunc(merge_data, df_stacked.isel(time1 = slice(0,None)),
                            input_core_dims=[["z"]],
                            output_core_dims=[["x","y"]],
                            vectorize=True, dask='parallelized')
@@ -90,10 +103,13 @@ train_set = xr.apply_ufunc(merge_data, df_stacked,
 X = train_set.astype('int8')
 x = np.array(X['sfc_temp']).astype('int8')
 x_train, x_test, y_train, y_test = train_test_split(np.repeat(x[:,:,:,np.newaxis],3,axis =-1),
-                                                    (subset1['sfc_temp'].values.astype('int8')),
+                                                    (subset1['sfc_temp'].isel(time1 = slice(0,None)).values.astype('int8')),
                                                     test_size=0.2, shuffle=False)
-
-
+# fig, ax = plt.subplots()
+# # Checkig a again
+# ax.plot(y_train[:150,87,124],'g')
+# ax.plot(x_train[:100,87,124,0])
+# fig.show()
 ip = tf.keras.layers.Input(shape = (416,256,3))
 pre = tf.keras.applications.mobilenet.preprocess_input(ip)
 bm = sm.Unet('mobilenet',input_shape =(416,256,3), encoder_weights ="imagenet",
@@ -116,14 +132,18 @@ model1.compile(loss ='mse', optimizer='adam')
 model1.compile(loss ='mse', optimizer='adam')
 model1.fit(x_train + 128, y_train,
            validation_data=(x_test + 128, y_test),
-           epochs=25, batch_size=10, shuffle =True)
+           epochs=25, batch_size=15, shuffle =True)
+model1.save(r'C:\Users\user\OneDrive - NIWA\Desktop\week-it-snowed-everywhere\interp_unet.h5')
+
 #model1.save(r'historical_model_daily_min.h5')
 
 preds = model1.predict(x_test + 128, verbose =1,batch_size =1)
 
-fig, ax = plt.subplots()
-ax.plot(preds[:150,50,150,0])
-ax.plot(y_test[:150,50,150],'r-')
+fig, ax = plt.subplots(2)
+# ax.plot(preds[:150,50,150,0])
+# ax.plot(x_test[:150,50,150],'r-')
+train_set['sfc_temp'].isel(time1 = 0).plot(ax = ax[0])
+subset1['sfc_temp'].isel(time1 = 0).plot(ax = ax[1])
 fig.show()
 
 fig, ax = plt.subplots(2, figsize =(10,15))
@@ -136,18 +156,18 @@ ax[1].contourf(y_test[88,:,:], cmap ='RdBu_r',
 fig.show()
 fig.savefig('Extremes_on_a_given_day.png')
 
-
+model1.save_weights(r'C:\Users\user\OneDrive - NIWA\Desktop\week-it-snowed-everywhere\interp_unet.h5')
 import cartopy.crs as ccrs
 proj = ccrs.RotatedPole(pole_latitude=49.55, pole_longitude=171.77, central_rotated_longitude=180)
 #
 transform = ccrs.RotatedPole(pole_latitude=49.55, pole_longitude=171.77, central_rotated_longitude=0)
 fig, (ax ,ax2)= plt.subplots(1,2, subplot_kw=dict(projection = proj))
-ax.contourf(lons, lats,preds[0,:,:,0], cmap='jet', transform = transform, levels = np.arange(0.0,0.4,0.005), extend ='both')
+ax.contourf(lons, lats,preds[15,:,:,0], cmap='jet', transform = transform, levels = np.arange(-10, 80, 1), extend ='both')
 #fig.show()
 
 
 #fig, ax = plt.subplots()
-ax2.contourf(lons, lats,y_test[0,:,:], cmap='jet', transform = transform, levels = np.arange(0.0,0.4,0.005), extend ='both')
+ax2.contourf(lons, lats,y_test[15,:,:], cmap='jet', transform = transform, levels = np.arange(-10, 80, 1), extend ='both')
 ax2.coastlines('10m')
 ax.coastlines('10m')
 # z = np.zeros([224,224]) * np.nan
@@ -158,13 +178,48 @@ ax.coastlines('10m')
 ax2.plot(lons[coords_in_arr[:,0],coords_in_arr[:,1]],lats[coords_in_arr[:,0],coords_in_arr[:,1]],'ko', markersize =12, transform = transform)
 fig.show()
 
+
+prediction_arr = xr.open_dataset(r"C:\Users\user\OneDrive - NIWA\Desktop\week-it-snowed-everywhere\data\the_week_it_snowed_gridded_deg.nc")
+#prediction_arr = (prediction_arr -32)/1.8 + 273.15
+
+# notes ad 128 for training
+
+
+
+preds_data = ((255 * (prediction_arr - 230)/(320 - 250) - 128))
 #
-# fig, ax = plt.subplots()
-# ax.plot(preds[:100,125,200,0], color ='r')
-# ax.plot(y_test[:100,125,200])
-# fig.show()
+prediction = model1.predict(np.repeat(preds_data['data'].values[:,:,:,np.newaxis].astype('int8'),3, axis =-1) + 128)
+#prediction = model1.predict(preds_data.expand_dims({"channel":3})['data'].values.transpose(1,2,3,0) +128)
+preds_ = ((prediction + 128) * (320 - 250)/255.0 + 230 - 273.15)
+preds2 = ((preds_data['data'].values + 128) * (320 - 250)/255.0 + 230 - 273.15) #*1.15 +0.34
+
+import cartopy.crs as ccrs
+proj = ccrs.RotatedPole(pole_latitude=49.55, pole_longitude=171.77, central_rotated_longitude=180)
 #
-#
+transform = ccrs.RotatedPole(pole_latitude=49.55, pole_longitude=171.77, central_rotated_longitude=0)
+fig, ax= plt.subplots(1,1, subplot_kw=dict(projection = proj))
+cs = ax.contourf(lons, lats,preds_[55,:,:,0], cmap='jet', transform = transform, levels = np.arange(-3, 3, 0.05), extend ='both')
+#fig.show()
+ax.coastlines('10m')
+fig.colorbar(cs, ax = ax)
+fig.show()
+
+
+fig, ax = plt.subplots()
+ax.plot(preds_[:, 397,27,0], color ='r')
+ax.plot(preds2[:, 397,27], color ='b')
+#ax.plot(preds_[:100, 397, 28,0], color ='r')
+#ax.plot(prediction_arr['data'][:100, 397, ] - 273.15)
+fig.show()
+
+meanx = np.nanmean(x_train[:], axis =(0,-1))
+meanp = preds_data.mean("time")['data'].values
+fig, ax = plt.subplots(
+
+)
+ax.plot(meanx.ravel(), meanp.ravel(),'rx')
+fig.show()
+
 # import matplotlib.pyplot as plt
 # import cartopy.crs as ccrs
 # index =3
