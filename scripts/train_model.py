@@ -22,7 +22,7 @@ os.chdir(r'C:\Users\user\OneDrive - NIWA\Desktop\week-it-snowed-everywhere')
 df2 = xr.open_dataset(r".\data\highresolution_northland_temperature_data.nc")
 df21 = df2.reindex(time1 = df2.time1.to_index().sort_values())
 
-sites = pd.read_csv('.\data\Site_coordsinates.csv', index_col=0)
+sites = pd.read_csv('.\data\metadata\Site_coordsinates.csv', index_col=0)
 sites = sites[['A64871', 'A42581', 'A53291', 'A64751', 'B75181', 'B75381', 'B75571',
        'B76621', 'B76951', 'B86124', 'C75731', 'C94001', 'C95251', 'D05481',
        'D05960', 'D87692', 'D87811', 'D96591', 'D96681', 'E04891', 'E05363',
@@ -104,20 +104,21 @@ X = train_set.astype('int8')
 x = np.array(X['sfc_temp']).astype('int8')
 x_train, x_test, y_train, y_test = train_test_split(np.repeat(x[:,:,:,np.newaxis],3,axis =-1),
                                                     (subset1['sfc_temp'].isel(time1 = slice(0,None)).values.astype('int8')),
-                                                    test_size=0.2, shuffle=False)
+                                                    test_size=0.01, shuffle=False)
 # fig, ax = plt.subplots()
 # # Checkig a again
 # ax.plot(y_train[:150,87,124],'g')
 # ax.plot(x_train[:100,87,124,0])
 # fig.show()
-ip = tf.keras.layers.Input(shape = (416,256,3))
-pre = tf.keras.applications.mobilenet.preprocess_input(ip)
-bm = sm.Unet('mobilenet',input_shape =(416,256,3), encoder_weights ="imagenet",
-             activation='linear',
-             decoder_use_batchnorm = True, encoder_freeze = True)(pre)
-model1 = tf.keras.models.Model(ip, bm)
-model1.trainable = True
-model1.compile(loss ='mse', optimizer='adam')
+# ip = tf.keras.layers.Input(shape = (416,256,3))
+# pre = tf.keras.applications.mobilenet.preprocess_input(ip)
+# bm = sm.Unet('mobilenet',input_shape =(416,256,3), encoder_weights ="imagenet",
+#              activation='linear',
+#              decoder_use_batchnorm = True, encoder_freeze = True)(pre)
+# model1 = tf.keras.models.Model(ip, bm)
+# model1.trainable = True
+# model1.compile(loss ='mse', optimizer='adam')
+model1 = tf.keras.models.load_model(r'C:\Users\user\OneDrive - NIWA\Desktop\week-it-snowed-everywhere\interp_unet_updated.h5')
 
 #model1.layers[3].load_weights('resnet18_encoder_for_wind_and_decoder.h5')
 #encoder_model = tf.keras.models.Model(ip, model1.layers[3].layers[85](ip))
@@ -132,25 +133,27 @@ model1.compile(loss ='mse', optimizer='adam')
 model1.compile(loss ='mse', optimizer='adam')
 model1.fit(x_train + 128, y_train,
            validation_data=(x_test + 128, y_test),
-           epochs=25, batch_size=15, shuffle =True)
-model1.save(r'C:\Users\user\OneDrive - NIWA\Desktop\week-it-snowed-everywhere\interp_unet.h5')
-
+           epochs=125, batch_size=10, shuffle =True)
+model1.save(r'C:\Users\user\OneDrive - NIWA\Desktop\week-it-snowed-everywhere\interp_unet_updated1.h5')
+model1.save_weights('model_updated.1h5')
 #model1.save(r'historical_model_daily_min.h5')
 
 preds = model1.predict(x_test + 128, verbose =1,batch_size =1)
 
-fig, ax = plt.subplots(2)
-# ax.plot(preds[:150,50,150,0])
-# ax.plot(x_test[:150,50,150],'r-')
-train_set['sfc_temp'].isel(time1 = 0).plot(ax = ax[0])
-subset1['sfc_temp'].isel(time1 = 0).plot(ax = ax[1])
-fig.show()
-
-fig, ax = plt.subplots(2, figsize =(10,15))
-ax[0].contourf(preds[88,:,:,0], cmap ='RdBu_r',
-            levels =np.arange(-50, 128, 1), extend ='both')
-ax[1].contourf(y_test[88,:,:], cmap ='RdBu_r',
-             levels = np.arange(-50, 128, 1), extend ='both')
+# fig, ax = plt.subplots(2)
+# # ax.plot(preds[:150,50,150,0])
+# # ax.plot(x_test[:150,50,150],'r-')
+# train_set['sfc_temp'].isel(time1 = 0).plot(ax = ax[0])
+# subset1['sfc_temp'].isel(time1 = 0).plot(ax = ax[1])
+# fig.show()
+#
+# preds = model1.predict(x_test + 128, verbose =1,batch_size =1)
+#
+# fig, ax = plt.subplots(2, figsize =(10,15))
+# ax[0].contourf(preds[88,:,:,0], cmap ='RdBu_r',
+#             levels =np.arange(-50, 128, 1), extend ='both')
+# ax[1].contourf(y_test[88,:,:], cmap ='RdBu_r',
+#              levels = np.arange(-50, 128, 1), extend ='both')
 
 
 fig.show()
@@ -194,11 +197,24 @@ preds_ = ((prediction + 128) * (320 - 250)/255.0 + 230 - 273.15)
 preds2 = ((preds_data['data'].values + 128) * (320 - 250)/255.0 + 230 - 273.15) #*1.15 +0.34
 
 import cartopy.crs as ccrs
+preds_data['data'].values = preds_[:,:,:,0]
+average_temp = preds_data.groupby(preds_data.time.dt.month).min()
+fig, ax = plt.subplots(1,3, subplot_kw=dict(projection = proj), figsize = (10,15))
+ax = ax.ravel()
+for i in range(3):
+    cs = ax[i].contourf(lons, lats, average_temp.isel(month = i)['data'].values, cmap='jet', transform=transform, levels=np.arange(-5, 5, 0.05),
+                     extend='both')
+    #ax[i].set_title(average_temp.time.to_index().strftime("%Y-%B")[i])
+fig.show()
+
+
+
+
 proj = ccrs.RotatedPole(pole_latitude=49.55, pole_longitude=171.77, central_rotated_longitude=180)
 #
 transform = ccrs.RotatedPole(pole_latitude=49.55, pole_longitude=171.77, central_rotated_longitude=0)
 fig, ax= plt.subplots(1,1, subplot_kw=dict(projection = proj))
-cs = ax.contourf(lons, lats,preds_[55,:,:,0], cmap='jet', transform = transform, levels = np.arange(-3, 3, 0.05), extend ='both')
+cs = ax.contourf(lons, lats,preds_[59,:,:,0], cmap='jet', transform = transform, levels = np.arange(-5, 6, 0.1), extend ='both')
 #fig.show()
 ax.coastlines('10m')
 fig.colorbar(cs, ax = ax)
@@ -206,8 +222,8 @@ fig.show()
 
 
 fig, ax = plt.subplots()
-ax.plot(preds_[:, 397,27,0], color ='r')
-ax.plot(preds2[:, 397,27], color ='b')
+ax.plot(preds_[:, 397,28,0], color ='r')
+ax.plot(preds2[:, 397,28], color ='b')
 #ax.plot(preds_[:100, 397, 28,0], color ='r')
 #ax.plot(prediction_arr['data'][:100, 397, ] - 273.15)
 fig.show()
